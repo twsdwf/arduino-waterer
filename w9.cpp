@@ -194,7 +194,7 @@
 
 #endif
 
-#define MAX_POTS	(CD4067_COUNT*16)
+#define MAX_POTS	20//(CD4067_COUNT*16)
 
 #define BT_BAUD		38400
 
@@ -562,7 +562,7 @@ void readConfig()
 	if (mem.read(0) != CONFIG_MAGIC) {
 		config.sensors_count = 0;
 		config.flags &= ~MODE_RUN;
-		Serial.println("Broken config");
+		Serial.println("bad cfg");
 		return;
 	}
 	mem.readBuffer(PAGE_ALIGN, (char*)&config, sizeof(config));
@@ -573,7 +573,7 @@ void readConfig()
 	if(config.sensors_count > MAX_POTS) {
 		config.sensors_count = 0;
 		config.flags &= ~MODE_RUN;
-		Serial.println("broken cfg");
+		Serial.println("bad cfg");
 		return;
 	}
 
@@ -650,30 +650,6 @@ void printGlobalConfig()
 	Serial.println(buf);
 	EXTRACT_STRING(sensors_fmt);
 	sprintf(buf, str, config.sensors_count);
-// 	Serial.println(buf);
-// 	static const char pos_fmt_str[] PROGMEM = "%d=>%d ";
-// 	static const char wpos_fmt_str[] PROGMEM = "water pos: ";
-// 	static const char wpos2_fmt_str[] PROGMEM = "water pos2: ";
-// 	EXTRACT_STRING(wpos_fmt_str);
-// 	Serial.print(str);
-
-// 	EXTRACT_STRING(pos_fmt_str);
-/*
-	for (char i = 0; i < POSITIONS; ++i) {
-		sprintf(buf, str, i, positions[ i ]);
-		Serial.print(buf);
-	}
-	Serial.println();
-	EXTRACT_STRING(wpos2_fmt_str);
-	Serial.print(str);*/
-/*
-	EXTRACT_STRING(pos_fmt_str);
-	for (char i = 0; i < POSITIONS2; ++i) {
-		sprintf(buf, str, i, positions2[ i ]);
-		Serial.print(buf);
-	}
-	Serial.println();
-*/
 	Serial.flush();
 	delay(500);
 }
@@ -770,7 +746,7 @@ int readSensor(int i, bool debug=false)
 // 		pots[i].needs_watering = false;
 		return 0;
 	}
-
+/*
 	Serial.print(val, DEC);
 	Serial.print(" ");
 	Serial.print(pots[i].lbound, DEC);
@@ -780,7 +756,7 @@ int readSensor(int i, bool debug=false)
 	Serial.print(( (val <= pots[i].rbound) && !(IS_DRYING_INTERVAL(i))), DEC);
 	Serial.print(" ");
 	Serial.println(( ( (val <= pots[i].rbound) && !(IS_DRYING_INTERVAL(i))) || (val <= pots[i].lbound))?1:0, DEC);
-
+*/
 	if (val >= pots[i].rbound) {
 		SET_INTERVAL_DRYING(i);
 		SET_WATERING(i, 0);
@@ -880,6 +856,7 @@ void water()
 			Serial.println(buf);
 		}//if needs_watering
 		++i;
+		showErrors();
 	}//while watering
 // 	ws[0].standby();
 // 	ws[1].standby();
@@ -1135,7 +1112,7 @@ bool doCommand(char*cmd)
 	if (!strncmp("rc",cmd,2)) {
 		int8_t index =  cmd[2]-'0';
 		if(index >=0 && index < DOSERS) {
-			ws[index].calibrate();
+			ws[index].calibrate(1);
 		}
 	} else if (!strncmp("getall", cmd, 6)) {
 		pin_write(SENSOR_RELAY_PIN, HIGH);
@@ -1210,6 +1187,7 @@ void checkCommand()
 			if ( i == 0 ) continue;
 			buf[ i ] = 0;
 			doCommand(buf);
+			showErrors();
 			i = 0;
 		} else {
 			buf[i++] = ch;
@@ -1357,6 +1335,11 @@ void loop()
 	Serial.println("start water");
 	water();
 	Serial.println("end water");
+	showErrors();
+#ifdef USE_LCD
+	lcd.begin(16, 4);
+	lcd.clear();
+#endif
 #ifndef BIG_ROOM
 	delay(1000);
 #endif
@@ -1365,6 +1348,21 @@ void loop()
 
 void setup()
 {
+#if 0
+	/* Clear the reset flag. */
+	MCUSR &= ~(1<<WDRF);
+
+	/* In order to change WDE or the prescaler, we need to
+	* set WDCE (This will allow updates for 4 clock cycles).
+	*/
+	WDTCSR |= (1<<WDCE) | (1<<WDE);
+
+	/* set new watchdog timeout prescaler value */
+	WDTCSR = /*(1<<WDP0) |*/ (1<<WDP1) | (1<<WDP2); /* 8.0 seconds */
+
+	/* Enable the WD interrupt (note no reset). */
+	WDTCSR |= _BV(WDIE);
+#endif
 	pinMode(2, INPUT);
 	pinMode(3, INPUT);
 	digitalWrite(2, LOW);
@@ -1421,7 +1419,7 @@ mem.init();
 	ws[0].init(WATER_SERVO1_PIN, REED_1, 16, 500, 3200);
 #endif
 	ws[0].setDevId(1);
-	ws[0].calibrate();
+// 	ws[0].calibrate();
 // 	pinMode(4, OUTPUT);
 // 	digitalWrite(4, 1);
 // 	delay(1000);
@@ -1429,9 +1427,9 @@ mem.init();
 
 
 #if DOSERS > 1
-	ws[1].init(WATER_SERVO2_PIN, REED_2, 9);
+	ws[1].init(WATER_SERVO2_PIN, REED_2, 8);
 	ws[1].setDevId(2);
-	ws[1].calibrate();
+// 	ws[1].calibrate();
 #endif
 	config.flags = USE_CLOCK(config.flags);
 	config.flags &= ~MODE_RUN;
@@ -1442,3 +1440,11 @@ mem.init();
 	readConfig();
 	readDayData();
 }
+
+#if 0
+ISR(WDT_vect)
+{
+	Serial.print("WDT ");
+	Serial.println(freeMemory(), DEC);
+}
+#endif
