@@ -19,14 +19,18 @@
 // #include <EEPROM.h>
 #include <ShiftOut.h>
 #include <OneWire.h>
-#include <avr/eeprom.h>
 #include <LiquidCrystal595Rus.h>
 #include <WaterDoser.h>
 #include <WaterServoEx.h>
 
 #include <DS1302.h>
 // #include <DHT.h>
+
 #include <Wire.h>
+/*
+ATCxxx is compatible between different sizes.
+ */
+#include <AT24Cxxx.h>
 
 #define CONFIG_MAGIC 0x42
 
@@ -237,10 +241,7 @@
 
 #define PROGMEM __attribute__((section(".progmem.data")))
 
-/*
-ATCxxx is compatible between different sizes.
- */
-#include <AT24C512.h>
+
 
 /*
 	особо экономить эту память бессмысленно, т.к. у нас 16КБ на конфиг максимум в 32 элемента по меньше, чем 64 байта.
@@ -254,11 +255,11 @@ ATCxxx is compatible between different sizes.
 #define PAGE_ALIGN	64
 #define POTS_CONFIG_START	(PAGE_ALIGN * 6)
 
-AT24C512 mem(80);
+AT24Cxxx mem(80);
 
 
 
-const char *VER[3] = {__DATE__, __TIME__, "w9r6.cpp"};
+const char *VER[3] = {__DATE__, __TIME__, "w9r13.cpp"};
 
 ShiftOut extPins(SHIFT_LATCH, SHIFT_CLOCK, SHIFT_DATA, SHIFT_OUTS);
 
@@ -513,9 +514,9 @@ WaterServoEx ws[ DOSERS ] = {WaterServoEx()
 
 class PotsHolder{
 protected:
-	AT24C512*memory;
+	AT24Cxxx*memory;
 public:
-	PotsHolder(AT24C512*mem){
+	PotsHolder(AT24Cxxx*mem){
 		this->memory = mem;
 	}
 	void readPotName(uint8_t index, char*buf)
@@ -989,7 +990,7 @@ void setOption(char* cmd)
 		EXTRACT_STRING(time_read_fmt);
 		sscanf(cmd + 5, str, &td.hours, &td.minutes, &td.seconds, &td.day, &td.month, &dow);
 		td.dow = dow;
-		td.year = 2013;
+		td.year = 2014;
 		printTime2buf(td);
 		Serial.println(buf);
 		ds1302.writetime(td);
@@ -1323,7 +1324,6 @@ void loop()
 #endif
 // 	return;
 // 	Serial.println("loop()");
-// 	showErrors();
 	checkCommand();
 	td = ds1302.readtime();
 #ifdef USE_1WIRE
@@ -1334,6 +1334,7 @@ void loop()
 		lcd.setCursor(0, LCD_TIME_LINE);
 		printTime2buf(td, 0, 1);
 		lcd.print(buf);
+		showErrors();
 #endif
 		if ( /*USE_CLOCK(config.flags) &&*/ (isNight(td) || !IS_RUN(config.flags)) ) {
 #ifdef USE_LCD

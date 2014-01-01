@@ -1,5 +1,6 @@
 #include<Arduino.h>
 #include "WaterDoser.h"
+#include <util/atomic.h>
 
 #define ERR_WFS_NOSIGNAL 	1
 
@@ -14,12 +15,15 @@ WaterDoser* cur_doser = NULL;
 
 void water_doser_ticker()
 {
-	if (!cur_doser) {
-		return;
-	}
-	cur_doser->value++;
-	if (cur_doser->value >= cur_doser->stop_value) {
-		cur_doser->stop();
+	ATOMIC_BLOCK(ATOMIC_RESTORESTATE)
+	{
+		if (!cur_doser) {
+			return;
+		}
+		cur_doser->value++;
+		if (cur_doser->value >= cur_doser->stop_value) {
+			cur_doser->stop();
+		}
 	}
 }
 
@@ -106,11 +110,15 @@ int WaterDoser::run(int ml)
 	this->stop();
 	this->value = 0;
 	this->stop_value = ml * 4;//i'm a bit lazy and this class is not work in drag factory. let flow sensor sends 4000 pulses, not 3900.
-
+	if (cur_doser) {
+		Serial.println("FUCK! Doser inited");
+		return 0;
+	}
 	cur_doser = this;
 
 	pin_write(this->pump_pin, HIGH, true);
-
+	Serial.print("run");
+	Serial.println(this->dev_id, HEX);
 	state = 1;
 
 	while (this->state) {
@@ -144,7 +152,12 @@ int WaterDoser::run(int ml)
 void WaterDoser::stop()
 {
 	this->state = 0;
-	pin_write(this->pump_pin, LOW, true);
+	ATOMIC_BLOCK(ATOMIC_RESTORESTATE){
+		cur_doser = NULL;
+		pin_write(this->pump_pin, LOW, true);
+	}
+	Serial.print("stop");
+	Serial.println(this->dev_id, HEX);
 }
 
 void WaterDoser::init(uint8_t interrupt)

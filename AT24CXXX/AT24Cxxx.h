@@ -1,15 +1,21 @@
-#ifndef _AT24C512
-#define _AT24C512
+#ifndef _AT24Cxxx
+#define _AT24Cxxx
+
 #include <inttypes.h>
 #include <Arduino.h>
+/*
+AT24Cxxx can work at 1MHz at 5V power supply.
+But atmega328 not...
+ */
+
 #include <Wire.h>
 
-class AT24C512{
+class AT24Cxxx{
 	protected:
 		int address;
 	public:
-		AT24C512(int addr = 80);
-		~AT24C512();
+		AT24Cxxx(int addr = 80);
+		~AT24Cxxx();
 		void init();
 		uint8_t read(uint16_t address);
 		void write(uint16_t address, uint8_t byte);

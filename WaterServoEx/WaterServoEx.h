@@ -18,7 +18,7 @@ class WaterServoEx
 {
 	Servo srv;
 	uint8_t pin, state, reed,dev_id, errc;
-	uint8_t* positions;
+	uint8_t positions[18];
     int _t0,_t1, n_pos;
 protected:
 	/**
@@ -26,7 +26,7 @@ protected:
 	 */
 
 public:
-	void calibrate();
+	void calibrate(bool dbg=true);
 	WaterServoEx();
 	virtual ~WaterServoEx();
 	void setDevId(uint8_t _dev_id);
