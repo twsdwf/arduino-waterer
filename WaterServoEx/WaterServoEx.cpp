@@ -22,6 +22,12 @@ WaterServoEx::WaterServoEx()
 // 	this->positions = NULL;
 }
 
+void WaterServoEx::resetError()
+{
+	this->errc = 0;
+	this->state = WSST_ZERO;
+}
+
 void WaterServoEx::init(char pin, char reed, uint8_t _n_pos, int t0, int t1)
 {
 	this->n_pos = _n_pos;

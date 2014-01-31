@@ -111,14 +111,14 @@ int WaterDoser::run(int ml)
 	this->value = 0;
 	this->stop_value = ml * 4;//i'm a bit lazy and this class is not work in drag factory. let flow sensor sends 4000 pulses, not 3900.
 	if (cur_doser) {
-		Serial.println("FUCK! Doser inited");
+// 		Serial.println("FUCK! Doser inited");
 		return 0;
 	}
 	cur_doser = this;
 
 	pin_write(this->pump_pin, HIGH, true);
-	Serial.print("run");
-	Serial.println(this->dev_id, HEX);
+// 	Serial.print("run");
+// 	Serial.println(this->dev_id, HEX);
 	state = 1;
 
 	while (this->state) {
@@ -156,8 +156,8 @@ void WaterDoser::stop()
 		cur_doser = NULL;
 		pin_write(this->pump_pin, LOW, true);
 	}
-	Serial.print("stop");
-	Serial.println(this->dev_id, HEX);
+// 	Serial.print("stop");
+// 	Serial.println(this->dev_id, HEX);
 }
 
 void WaterDoser::init(uint8_t interrupt)

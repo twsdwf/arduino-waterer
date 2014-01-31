@@ -32,6 +32,7 @@ public:
 	void setDevId(uint8_t _dev_id);
 	uint8_t getError();
 	bool isError();
+	void resetError();
 	/*
 	 * pin for Servo, pin with reed switch, number of cups, t0 and t1 -- from Servo library.
 	 */

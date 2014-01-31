@@ -37,7 +37,7 @@ ATCxxx is compatible between different sizes.
 
 #define BIG_ROOM 1
 
-#define MULTIDOSER 1
+// #define MULTIDOSER 1
 // #define _DEBUG	1
 
 #define MINIMUN_VALID_VALUE		5
@@ -51,7 +51,12 @@ ATCxxx is compatible between different sizes.
 #define SHIFT_CLOCK			A2	//*
 #define AIN_PIN				A3	//*
 
-
+/*
+	we use 1 HC595 to control two CD4067.
+	so, we have 8 outputs and 2*5 control inputs.
+	OK, use some outputs twice. we never use CD4067 simultaneously, so we can
+	re-use any pins of 595, that not connected to INH inputs of CD4067.
+*/
 #define VIO_4067_1_A		(VIO_BASE+12)
 #define VIO_4067_1_B		(VIO_BASE+11)
 #define VIO_4067_1_C		(VIO_BASE+9)
@@ -66,10 +71,8 @@ ATCxxx is compatible between different sizes.
 
 
 #define VIO_AIN_RELAY	 ((VIO_BASE) + 1) //*
-#define VIO_PUMP1	 	 ((VIO_BASE) + 2)	//*
-#define SENSOR_RELAY_PIN	VIO_AIN_RELAY
 
-#define PUMP_PIN			VIO_PUMP1
+#define SENSOR_RELAY_PIN	VIO_AIN_RELAY
 
 #ifdef BIG_ROOM
 	#define MULTIDOSER 1
@@ -77,11 +80,12 @@ ATCxxx is compatible between different sizes.
 	#define DOSERS	2
 	#define PUMPS	2
 
+	#define VIO_PUMP1	 	 ((VIO_BASE) + 2)	//*
+	#define PUMP_PIN			VIO_PUMP1
+
 	#define USE_1WIRE	1
 	#define USE_LCD		1
 	// #define _USE_LIGHT_SENSOR
-
-	#define PUMP_STATE_RESET_PIN	3 //interrupt 1
 
 	#define PUMP1_COUNTER_PIN	2 //interrupt 0
 	#define PUMP2_COUNTER_PIN	3 //interrupt 1
@@ -137,6 +141,9 @@ ATCxxx is compatible between different sizes.
 	//direct use -- with VIO_BASE
 	#define VIO_ERROR_LED_PIN ((VIO_BASE)+23)
 
+// light bulb relay pin
+#define VIO_LIGHT_BULB_PIN	(VIO_BASE+7)
+
 	#define LCD_TIME_LINE		0
 	#define LCD_OUT_TEMP_LINE	1
 	#define LCD_STATE_LINE		2
@@ -153,12 +160,12 @@ ATCxxx is compatible between different sizes.
 	#define DOSERS	1
 	#define PUMPS	1
 	#define SHIFT_OUTS	2
-
+	#define VIO_PUMP1	 	 ((VIO_BASE) + 3)	//*
+	#define PUMP_PIN		VIO_PUMP1
 // 	#define USE_1WIRE	1
 // 	#define USE_LCD		1
 	// #define _USE_LIGHT_SENSOR
 
-	#define PUMP_STATE_RESET_PIN	3 //interrupt 1
 
 	#define PUMP1_COUNTER_PIN	2 //interrupt 0
 // 	#define PUMP2_COUNTER_PIN	3 //interrupt 1
@@ -186,7 +193,7 @@ ATCxxx is compatible between different sizes.
 
 #endif
 
-#define MAX_POTS	20//(CD4067_COUNT*16)
+#define MAX_POTS	(CD4067_COUNT*16)
 
 #define BT_BAUD		38400
 
@@ -249,17 +256,19 @@ ATCxxx is compatible between different sizes.
 	страница							данные
 	0									magic
 	1									global config
+	2									daily watering data
 	POTS_CONFIG_START+PAGE_ALIGN*i  	pot[i]
 */
 
 #define PAGE_ALIGN	64
 #define POTS_CONFIG_START	(PAGE_ALIGN * 6)
+#define DAILY_WATER_DATA_START (PAGE_ALIGN * 2)
 
 AT24Cxxx mem(80);
 
 
 
-const char *VER[3] = {__DATE__, __TIME__, "w9r13.cpp"};
+const char *VER[3] = {__DATE__, __TIME__, "w9r16.cpp"};
 
 ShiftOut extPins(SHIFT_LATCH, SHIFT_CLOCK, SHIFT_DATA, SHIFT_OUTS);
 
@@ -276,11 +285,12 @@ char buf[60]={0}, str[40]={0};
 #ifdef BIG_ROOM
 
 #ifdef USE_1WIRE
-#define MAX_DS1820_SENSORS 2
+
+#define MAX_DS18B20_SENSORS 2
 #define INDOOR_TERMO	1
 #define OUTDOOR_TERMO	0
 
-uint8_t thermo_addrs[MAX_DS1820_SENSORS][8] = {{40,89,110,160,4,0,0,34},{40,181,213,159,4,0,0,155}};
+uint8_t thermo_addrs[MAX_DS18B20_SENSORS][8] = {{40,89,110,160,4,0,0,34},{40,181,213,159,4,0,0,155}};
 #endif
 
 #ifdef USE_1WIRE
@@ -327,7 +337,10 @@ struct GlobalWaterConfig
 	uint8_t night_from_we;
 	uint8_t night_to_we;
 	uint8_t sensors_count;
-	uint8_t spray_length;
+	uint8_t spray_length;//obsolete
+	uint8_t light_sensor_pin;
+	uint8_t light_sensor_min;
+	uint8_t light_sensor_timeout;
 };
 
 struct plantdata{
@@ -372,7 +385,7 @@ void printTime2buf(timedata& td, char with_seconds = 1,char lang = 0)
 
 void pin_write(uint8_t pin, char value, bool flush=true)
 {
-	if(pin <= 3) return;//0 & 1 --serial, 2 -- wf sensor, 3 -- water err reset btn
+	if(pin <= 3) return;//0 & 1 --serial, 2 -- wf sensor, 3 -- wf sensor or stm like.
 	if (pin < VIO_BASE) {
 		_digitalWrite(pin, value);
 	} else {
@@ -422,7 +435,7 @@ public:
 	{
 		pin_write(this->en, HIGH, true);
 	}
-	uint8_t read(uint8_t pin)
+	int readFull(uint8_t pin)
 	{
 		int ret = 0;
 		pin = pin & 0x0F;
@@ -435,7 +448,11 @@ public:
 			delayMicroseconds(20);
 			ret +=analogRead(this->ain);
 		pin_write(this->en, HIGH, true);
-		return (ret >> 3);
+		return (ret>>1);
+	}
+	uint8_t read(uint8_t pin)
+	{
+		return (this->readFull(pin)>>2);
 	}
 };
 
@@ -448,11 +465,6 @@ CD4067 cd4067[ CD4067_COUNT ]= {
 	, CD4067(VIO_4067_2_INH, VIO_4067_2_A, VIO_4067_2_B, VIO_4067_2_C, VIO_4067_2_D, AIN_PIN)
 #endif
 };
-
-
-// bool run = false;
-
-// uint16_t elapsed = 0;
 
 #if DEBUG
 extern unsigned int __heap_start;
@@ -496,8 +508,6 @@ int freeMemory() {
 #endif
 
 
-
-
 WaterDoser wd[ DOSERS ] = {
 	WaterDoser(PUMP_PIN, 0)
 #if DOSERS > 1
@@ -532,6 +542,7 @@ public:
 
 	void readPot(int8_t index, plantdata*pot)
 	{
+		memset(pot, 0, sizeof(plantdata));
 		this->memory->readBuffer(POTS_CONFIG_START + PAGE_ALIGN * index, (char*)pot, sizeof(plantdata));
 	}
 
@@ -552,29 +563,17 @@ void saveConfig()
 	mem.writeBuffer(PAGE_ALIGN, (char*)&config, sizeof(config));
 
 	i = 0;
-// 	mem.writeBuffer(PAGE_ALIGN * 2, (char*)&positions, sizeof(positions));
-// 	mem.writeBuffer(PAGE_ALIGN * 3, (char*)&positions2, sizeof(positions2));
-/*
-	while (i < config.sensors_count) {
-		mem.writeBuffer(POTS_CONFIG_START + PAGE_ALIGN * i, (char*)&pot, sizeof(plantdata));
-		++i;
-	}*/
 }
-void eraseConfig()
-{
-// 	for(uint16_t i=0; i < 32767; ++i) {
-// 		eeprom_write_byte( (uint8_t*)i, 0);
-// 	}
-}
+
 
 void readConfig()
 {
 	char i = 0;
-
+static const char bad_cfg[] = "bad cfg";
 	if (mem.read(0) != CONFIG_MAGIC) {
 		config.sensors_count = 0;
 		config.flags &= ~MODE_RUN;
-		Serial.println("bad cfg");
+		Serial.println(bad_cfg);
 		return;
 	}
 	mem.readBuffer(PAGE_ALIGN, (char*)&config, sizeof(config));
@@ -585,7 +584,7 @@ void readConfig()
 	if(config.sensors_count > MAX_POTS) {
 		config.sensors_count = 0;
 		config.flags &= ~MODE_RUN;
-		Serial.println("bad cfg");
+		Serial.println(bad_cfg);
 		return;
 	}
 
@@ -846,14 +845,16 @@ void water2Bowl(int i)
 		pot.watered = 0;
 	}
 	if (pot.watered > pot.day_max) {
- 		sprintf(buf, "%i max=(", i);
- 		Serial.println(buf);
+//  		sprintf(buf, "%i max=(", i);
+//  		Serial.println(buf);
 		SET_WATERED(i);
 		pots_holder.writePot(i, &pot);
 		return;
 	}
 	uint8_t doser = DOSER(pot.sensor);
 // 	pin_write( WFS[ doser ], 1, 1);
+	Serial.print("move to:");
+	Serial.println(pot.bowl_index, DEC);
 	ws[ doser ].moveTo(pot.bowl_index);
 	if (ws[ doser ].isError()) {
 		showErrors();
@@ -878,9 +879,9 @@ void water()
 			water2Bowl(i);
 		} else {
 			if (wd[ DOSER(pot.sensor) ].isError()) {
-				sprintf(buf, "%d pump error", i);
+// 				sprintf(buf, "%d pump error", i);
 			} else if (!NEEDS_WATERING(i)) {
-				sprintf(buf, "%d: no watering flag", i);
+// 				sprintf(buf, "%d: no watering flag", i);
 			}
 			Serial.println(buf);
 		}//if needs_watering
@@ -895,7 +896,7 @@ void water()
 #ifdef USE_LCD
 	lcd.clear();
 #endif
-	Serial.println("eow");
+// 	Serial.println("eow");
 }
 
 
@@ -916,6 +917,9 @@ int minutes_diff(timedata& t0, timedata& t1)
 
 void saveDayData()
 {
+	mem.writeBuffer(DAILY_WATER_DATA_START, (char*)&last_analize, sizeof(last_analize));
+#if 0
+	//obsolete. we can write all in flash memory.
 	timedata td = ds1302.readtime();
 	ds1302.writeRAMbyte(0, td.day);
 	ds1302.writeRAMbyte(1, config.sensors_count);
@@ -923,10 +927,14 @@ void saveDayData()
 		pots_holder.readPot(i, &pot);
 		ds1302.writeRAMbyte( 2 + i, map(pot.watered, 0, 1024, 0, 255));
 	}
+#endif
 }
 
 void readDayData()
 {
+	mem.readBuffer(DAILY_WATER_DATA_START, (char*)&last_analize, sizeof(last_analize));
+#if 0
+//obsolete. we store all data in flash.
 	timedata td = ds1302.readtime();
 	for(char i = 0;i < config.sensors_count; ++i) {
 		pots_holder.readPot(i, &pot);
@@ -940,20 +948,32 @@ void readDayData()
 			pots_holder.writePot(i, &pot);
 		}
 	}
+#endif
 }
 
 void setOption(char* cmd)
 {
 	timedata td;
+#ifdef EXT_COMMANDS
 	static const char TWO_INTS_FMT_STR[] PROGMEM="%d %d";
-	static const char THREE_INTS_FMT_STR[] PROGMEM="%d %d %d";
+#endif
+// 	static const char THREE_INTS_FMT_STR[] PROGMEM="%d %d %d";
 	static const char time_read_fmt[] PROGMEM = "%d:%d:%d %d.%d %d";
 	static const char data_fmt[] PROGMEM = "%d %d %d %d %d %d %d %d %d";
-	static const char nights[] PROGMEM = "nights: work day %d-%d, weekend %d-%d";
-	static const char stop_msg[] PROGMEM = "Stopped.\nSensors count=";
+// 	static const char nights[] PROGMEM = "nights: work day %d-%d, weekend %d-%d";
+// 	static const char stop_msg[] PROGMEM = "Stopped.\nSensors count=";
 	static const char FOUR_INTS_FMT_STR[] PROGMEM = "%d %d %d %d";
-	if (!strncmp("name", cmd, 4)) {
+	if (!strncmp(cmd, "light", 5)) {
+		int  a,b,c,d;
+		EXTRACT_STRING(FOUR_INTS_FMT_STR);
+		sscanf(cmd+6, str, &a, &b, &c, &d);
+		config.light_sensor_pin = (a<<4) | (b & 0x0F);
+		config.light_sensor_min = c;
+		config.light_sensor_timeout = d;
+	} else if (!strncmp("name", cmd, 4)) {
 		uint8_t index = (cmd[5]-'0') * 10 + (cmd[6]-'0');
+		Serial.print("index:");
+		Serial.println(index, DEC);
 		pots_holder.readPot(index, &pot);
 		strncpy(pot.name, cmd+8, 16);
 		pots_holder.writePot(index, &pot);
@@ -991,13 +1011,13 @@ void setOption(char* cmd)
 		sscanf(cmd + 5, str, &td.hours, &td.minutes, &td.seconds, &td.day, &td.month, &dow);
 		td.dow = dow;
 		td.year = 2014;
-		printTime2buf(td);
-		Serial.println(buf);
 		ds1302.writetime(td);
-		td = ds1302.readtime();
-		Serial.print("Set time: ");
-		printTime2buf(td);
-		Serial.println(buf);
+// 		printTime2buf(td);
+// 		Serial.println(buf);
+// 		td = ds1302.readtime();
+// 		Serial.print("Set time: ");
+// 		printTime2buf(td);
+// 		Serial.println(buf);
 	} else if (!strncmp("data ", cmd, 5)) {
 		int index=0, a=0,b=0,c=0,d=0,e=0, f=0, g=0, h=0;
 		EXTRACT_STRING(data_fmt);
@@ -1059,7 +1079,7 @@ void dumpConfig()
 {
 	char index = 0;
 	const char*space=" ";
-	static const char*fmt = "set data %d %d %d %d %d %d %d %d %d";
+	static const char*fmt = "%d %d %d %d %d %d %d %d %d %s;";
 	sprintf(buf,"set sensors %d\n", config.sensors_count);
 	Serial.println(buf);
 	delay(100);
@@ -1074,7 +1094,8 @@ void dumpConfig()
 					pot.portion,
 					pot.lbound,
 					pot.rbound,
-					pot.day_max
+					pot.day_max,
+					pot.name
 			   );
  		Serial.println(buf);
 		delay(250);
@@ -1085,7 +1106,7 @@ void dumpConfig()
 void dumpState()
 {
 	uint8_t index = 0;
-	char*space=" ";
+	const char*space=" ";
 	while (index < config.sensors_count) {
 		pots_holder.readPot(index, &pot);
 		Serial.print(index, DEC);
@@ -1100,7 +1121,9 @@ void dumpState()
 		Serial.print(space);
 		Serial.print(pot.flags, DEC);
 		Serial.print(space);
+		Serial.print(pot.name);
 		Serial.println();
+		Serial.flush();
 		delay(100);
 		++index;
 	}
@@ -1130,16 +1153,46 @@ bool doCommand(char*cmd)
 		pin_write(VIO_SPRAY_EN, 0, 1);
 	}
 	else */
-	if (!strncmp("rc",cmd,2)) {
+	if (!strncmp("getlight", cmd, 8)) {
+		Serial.print(config.light_sensor_pin, DEC);
+		Serial.print(" ");
+		Serial.print(config.light_sensor_min, DEC);
+		Serial.print(" ");
+		Serial.print(config.light_sensor_timeout, DEC);
+		Serial.print(" ");
+		Serial.println(cd4067[ config.light_sensor_pin>>4 ].read(config.light_sensor_pin & 0x0F));
+		Serial.println(";");
+	} else if (!strncmp("memclr",cmd,6)) {
+		for(uint8_t i =0;i<31;++i) {
+			ds1302.writeRAMbyte(i, 0);
+		}
+	} else if (!strncmp("rc",cmd,2)) {
 		int8_t index =  cmd[2]-'0';
 		if(index >=0 && index < DOSERS) {
 			ws[index].calibrate(1);
 		}
+	} else if (!strncmp(cmd, "getstate", 8)) {
+		td = ds1302.readtime();
+		char fmt[] = "%d %d %d %d %d %d;";
+		sprintf(buf, fmt, td.hours, td.minutes, td.seconds, td.day, td.month, td.dow);
+		Serial.println(buf);
+		sprintf(buf, fmt,
+					IS_RUN(config.flags)?1:0,
+					isNight(td)?1:0,
+					config.night_from_wd,
+					config.night_to_wd,
+					config.night_from_we,
+					config.night_to_we
+			   );
+		Serial.println(buf);
+		sendErrorState();
+		Serial.print(";;");
 	} else if (!strncmp("geterrc", cmd, 7)) {
 		sendErrorState();
+		return true;
 	} else if (!strncmp("getall", cmd, 6)) {
 		pin_write(SENSOR_RELAY_PIN, HIGH);
-		Serial.print(CD4067_COUNT * 16);
+		Serial.print(CD4067_COUNT * 16, DEC);
 		Serial.print(" ");
 		delay(200);
 		for (char n = 0; n < CD4067_COUNT; ++n ) {
@@ -1152,16 +1205,13 @@ bool doCommand(char*cmd)
 		}
 		Serial.println(";");
 		pin_write(SENSOR_RELAY_PIN, LOW);
-	} /*else if (!strncmp("rm cfg", cmd, strlen("rm cfg"))) {
-		eraseConfig();
-	}*/ else if (!strncmp(cmd, "ping", 4)) {
+		return true;
+	} else if (!strncmp(cmd, "ping", 4)) {
 		Serial.println("pong");
 		for(char i=0;i<3;++i) {
 			Serial.println(VER[i]);
 		}
-	}/* else if (!strncmp("alive ", cmd, 6)) {
-		config.alive_ping = cmd[6] - '0';
-	} */else if (!strncmp(cmd, "set ", 4)) {
+	} else if (!strncmp(cmd, "set ", 4)) {
 		setOption(cmd + 4);
 	} else if (!strncmp("pipi", cmd, 4))  {
 		char index = atoi(cmd + 5);
@@ -1184,6 +1234,8 @@ bool doCommand(char*cmd)
 			readConfig();
 			printConfig();
 		}
+	} else if(!strncmp(cmd, "!test", 5)) {
+		analize(-1, 0);
 	} else if (!strncmp(cmd, "test", 4)) {
 		analize(-1, 1);
 	} else if (!strncmp(cmd, "atest", 5)) {
@@ -1224,8 +1276,10 @@ void checkCommand()
 void resetError()
 {
 	wd[0].resetError();
+	ws[0].resetError();
 #if DOSERS > 1
 	wd[1].resetError();
+	ws[1].resetError();
 #endif
 #ifdef VIO_ERROR_LED_PIN
 	pin_write(VIO_ERROR_LED_PIN, LOW, true);
@@ -1266,6 +1320,7 @@ int16_t readOWThermo(int index)
 	return result;
 }
 #endif
+
 #if defined(USE_1WIRE) && defined(USE_LCD)
 
 void showTemps()
@@ -1293,24 +1348,58 @@ void showErrors()
 	}
 	lcd.print(last_sensors_fails, DEC);
 #else
-	sendErrorState();
+// 	sendErrorState();
 #endif
 }
 
 void sendErrorState()
 {
-// 	Serial.print("State: ");
 	int8_t i;
 	for (i=0;i<DOSERS;++i) {
+		Serial.print("0x");// Qt QTextStream can not read hexadecimals without prefix.*facepalm*
 		Serial.print(ws[i].getError(), HEX);
 		Serial.print(" ");
 	}
 	for (i=0;i<DOSERS;++i) {
+		Serial.print("0x");
 		Serial.print(wd[i].getError(), HEX);
 		Serial.print(" ");
 	}
-	Serial.println(last_sensors_fails, DEC);
+	Serial.print(last_sensors_fails, DEC);
+	Serial.println(";");
 }
+
+#ifdef VIO_LIGHT_BULB_PIN
+
+#define FRAM_LAST_STATE			2
+#define FRAM_HOUR				0
+#define FRAM_MINUTE				1
+#define FRAM_DARK_START_HOUR	3
+#define FRAM_DARK_START_MINUTE	4
+#define LAMP_SWITCH_MIN_DELTA	10
+	uint8_t light_bulb_state = 0;
+	void lightSwitch(bool state)
+	{
+		timedata td = ds1302.readtime();
+		uint8_t h = ds1302.readRAMbyte(FRAM_HOUR), m = ds1302.readRAMbyte(FRAM_MINUTE), delta = abs(td.hours - h) * 60 + abs(td.minutes - m),
+			last_state = ds1302.readRAMbyte(FRAM_LAST_STATE);
+		if (delta < LAMP_SWITCH_MIN_DELTA && last_state != state) {
+			return;
+		}
+		if (state) {
+			pin_write(VIO_LIGHT_BULB_PIN, 1, 1);
+			light_bulb_state = 1;
+			ds1302.writeRAMbyte(FRAM_HOUR, td.hours);
+			ds1302.writeRAMbyte(FRAM_MINUTE, td.minutes);
+		} else {
+			pin_write(VIO_LIGHT_BULB_PIN, 0, 1);
+			light_bulb_state = 0;
+			ds1302.writeRAMbyte(FRAM_HOUR, td.hours);
+			ds1302.writeRAMbyte(FRAM_MINUTE, td.minutes);
+			ds1302.writeRAMbyte(FRAM_LAST_STATE, 0);
+		}
+	}
+#endif
 
 void loop()
 {
@@ -1322,10 +1411,63 @@ void loop()
 	static const char watering[] PROGMEM = "полив: ";
 	static const char ago[] PROGMEM = "м назад ";
 #endif
-// 	return;
-// 	Serial.println("loop()");
+
 	checkCommand();
 	td = ds1302.readtime();
+#ifdef VIO_LIGHT_BULB_PIN
+	/**
+		we use metal-halogen lamp. it should not change state more than one time in 5 minutes.
+	 */
+	uint8_t h = ds1302.readRAMbyte(FRAM_HOUR), m = ds1302.readRAMbyte(FRAM_MINUTE), delta = abs(td.hours - h) * 60 + abs(td.minutes - m),
+			last_state = ds1302.readRAMbyte(FRAM_LAST_STATE);
+	if (light_bulb_state == 0 && td.hours >=10 && td.hours < 22) {
+		if(last_state == 1 && delta < LAMP_SWITCH_MIN_DELTA) {
+
+		} else {
+			if (config.light_sensor_pin > 0) {
+				int lsv = cd4067[ config.light_sensor_pin>>4 ].read(config.light_sensor_pin & 0x0F);
+				int delta2 = (td.hours - ds1302.readRAMbyte(FRAM_DARK_START_HOUR))*60 + (td.minutes - ds1302.readRAMbyte(FRAM_DARK_START_MINUTE));
+				if (lsv <= config.light_sensor_min) {
+					if (delta2 >= config.light_sensor_timeout) {
+						lightSwitch(true);
+					}
+				} else {
+					ds1302.writeRAMbyte(FRAM_DARK_START_HOUR, td.hours);
+					ds1302.writeRAMbyte(FRAM_DARK_START_MINUTE, td.minutes);
+// 					if (delta > 5 && ) {
+// 						lightSwitch(false);
+// 					}
+				}
+			} else {
+				if (delta > LAMP_SWITCH_MIN_DELTA) {
+					lightSwitch(true);
+	// 				pin_write(VIO_LIGHT_BULB_PIN, 1, 1);
+	// 				light_bulb_state = 1;
+	// 				ds1302.writeRAMbyte(0, td.hours);
+	// 				ds1302.writeRAMbyte(1, td.minutes);
+				}
+			}
+		}
+	} else if (light_bulb_state == 1 && (td.hours >=22 || td.hours < 10) ) {
+ 		if ( delta > LAMP_SWITCH_MIN_DELTA) {
+			lightSwitch(false);
+// 			pin_write(VIO_LIGHT_BULB_PIN, 0, 1);
+// 			light_bulb_state = 0;
+// 			ds1302.writeRAMbyte(0, td.hours);
+// 			ds1302.writeRAMbyte(1, td.minutes);
+// 			ds1302.writeRAMbyte(2, 0);
+ 		}
+	}
+	if (light_bulb_state == 1) {
+		ds1302.writeRAMbyte(FRAM_HOUR, td.hours);
+		ds1302.writeRAMbyte(FRAM_MINUTE, td.minutes);
+		ds1302.writeRAMbyte(FRAM_LAST_STATE, 1);
+	}
+/*
+save last check time in non-volative RAM
+ */
+#endif
+
 #ifdef USE_1WIRE
 	showTemps();
 #endif
@@ -1336,7 +1478,7 @@ void loop()
 		lcd.print(buf);
 		showErrors();
 #endif
-		if ( /*USE_CLOCK(config.flags) &&*/ (isNight(td) || !IS_RUN(config.flags)) ) {
+		if ( (isNight(td) || !IS_RUN(config.flags)) ) {
 #ifdef USE_LCD
 			lcd.setCursor(0, LCD_STATE_LINE);
 			if (isNight(td)) {
@@ -1366,21 +1508,22 @@ void loop()
 		lcd.print(val);
 		EXTRACT_STRING(ago);
 		lcd.print(str);
+		showErrors();
 #endif
 		if (val < config.pause_in_minutes) {
 			return;
 		}
-		Serial.println("analize..");
+// 		Serial.println("analize..");
 	analize();
-	Serial.println("start water");
-	water();
-	Serial.println("end water");
-	showErrors();
-#ifdef USE_LCD
-	lcd.begin(16, 4);
-	lcd.clear();
+	ws[0].resetError();
+#if DOSERS > 1
+	ws[1].resetError();
 #endif
-#ifndef BIG_ROOM
+// 	Serial.println("start water");
+	water();
+// 	Serial.println("end water");
+
+#ifndef USE_1WIRE // if we dont use 1-wire thermo, make little pause between refreshes.
 	delay(1000);
 #endif
 }
@@ -1389,6 +1532,7 @@ void loop()
 void setup()
 {
 #if DEBUG
+//watchdog setup
 	cli();
 		/* Clear the reset flag. */
 		MCUSR &= ~(1<<WDRF);
@@ -1405,8 +1549,10 @@ void setup()
 		WDTCSR |= _BV(WDIE);
 	sei();
 #endif
+
 	pinMode(2, INPUT);
 	pinMode(3, INPUT);
+	//pull-down them!
 	digitalWrite(2, LOW);
 	digitalWrite(3, LOW);
 #if FASTADC
@@ -1417,17 +1563,14 @@ void setup()
 #endif
 
 
-static const char hello[] PROGMEM = "HELLO!";
-static const char init[] PROGMEM = "Запуск...";
+// static const char hello[] PROGMEM = "HELLO!";
+// static const char init[] PROGMEM = "Запуск...";
 // Serial.println(freeMemory(), DEC);
 
 Serial.begin(BT_BAUD);
+// 	EXTRACT_STRING(hello);
+// 	Serial.println(str);
 
-
-	EXTRACT_STRING(hello);
-	Serial.println(str);
-
-Serial.println(sizeof(plantdata), DEC);
 extPins.init();
 
 #ifdef USE_LCD
@@ -1435,7 +1578,6 @@ extPins.init();
 	lcd.clear();
 #endif
 mem.init();
-
 
 	ds1302.setTrickleMode(0);
 	last_spray = ds1302.readtime();
@@ -1447,8 +1589,8 @@ mem.init();
 		cd4067[ i ].init();
 	}
 #ifdef USE_LCD
- 	EXTRACT_STRING(hello);
-	lcd.print(str);
+//  	EXTRACT_STRING(hello);
+// 	lcd.print(str);
 #endif
 
 	for (char i = 0; i < DOSERS; ++i) {
@@ -1458,20 +1600,13 @@ mem.init();
 #ifdef BIG_ROOM
 	ws[0].init(WATER_SERVO1_PIN, REED_1, 10);
 #else
-	ws[0].init(WATER_SERVO1_PIN, REED_1, 16, 500, 3200);
+	ws[0].init(WATER_SERVO1_PIN, REED_1, 16, 500, 2500/*3200*/);
 #endif
 	ws[0].setDevId(1);
-// 	ws[0].calibrate();
-// 	pinMode(4, OUTPUT);
-// 	digitalWrite(4, 1);
-// 	delay(1000);
-// 	digitalWrite(4, 0);
-
 
 #if DOSERS > 1
-	ws[1].init(WATER_SERVO2_PIN, REED_2, 8);
+	ws[1].init(WATER_SERVO2_PIN, REED_2, 9);
 	ws[1].setDevId(2);
-// 	ws[1].calibrate();
 #endif
 	config.flags = USE_CLOCK(config.flags);
 	config.flags &= ~MODE_RUN;
@@ -1482,6 +1617,7 @@ mem.init();
 	readConfig();
 	readDayData();
 }
+
 
 #if DEBUG
 ISR(WDT_vect)
