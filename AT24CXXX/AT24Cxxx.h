@@ -7,7 +7,7 @@
 AT24Cxxx can work at 1MHz at 5V power supply.
 But atmega328 not...
  */
-
+#define TWI_FREQ	400000L
 #include <Wire.h>
 
 class AT24Cxxx{

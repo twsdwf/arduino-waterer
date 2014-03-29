@@ -1031,7 +1031,7 @@ void setOption(char* cmd)
 // 		pot.name[0] = 0;
 		pots_holder.writePot(index, &pot);
 		Serial.println("OK");
-// 		printPotConfig(index);
+		printPotConfig(index);
 	}
 #ifdef EXT_COMMANDS
 	else if (!strncmp(cmd, "sensor ", 7)) {
@@ -1235,7 +1235,11 @@ bool doCommand(char*cmd)
 			printConfig();
 		}
 	} else if(!strncmp(cmd, "!test", 5)) {
+		unsigned long start = millis();
 		analize(-1, 0);
+		unsigned long end = millis();
+		Serial.print("time:");
+		Serial.println(end-start, DEC);
 	} else if (!strncmp(cmd, "test", 4)) {
 		analize(-1, 1);
 	} else if (!strncmp(cmd, "atest", 5)) {
@@ -1377,15 +1381,17 @@ void sendErrorState()
 #define FRAM_DARK_START_HOUR	3
 #define FRAM_DARK_START_MINUTE	4
 #define LAMP_SWITCH_MIN_DELTA	10
-	uint8_t light_bulb_state = 0;
-	void lightSwitch(bool state)
-	{
+
+uint8_t light_bulb_state = 0;
+void lightSwitch(bool state)
+{
 		timedata td = ds1302.readtime();
 		uint8_t h = ds1302.readRAMbyte(FRAM_HOUR), m = ds1302.readRAMbyte(FRAM_MINUTE), delta = abs(td.hours - h) * 60 + abs(td.minutes - m),
 			last_state = ds1302.readRAMbyte(FRAM_LAST_STATE);
 		if (delta < LAMP_SWITCH_MIN_DELTA && last_state != state) {
 			return;
 		}
+
 		if (state) {
 			pin_write(VIO_LIGHT_BULB_PIN, 1, 1);
 			light_bulb_state = 1;
@@ -1398,7 +1404,7 @@ void sendErrorState()
 			ds1302.writeRAMbyte(FRAM_MINUTE, td.minutes);
 			ds1302.writeRAMbyte(FRAM_LAST_STATE, 0);
 		}
-	}
+}
 #endif
 
 void loop()
@@ -1421,9 +1427,6 @@ void loop()
 	uint8_t h = ds1302.readRAMbyte(FRAM_HOUR), m = ds1302.readRAMbyte(FRAM_MINUTE), delta = abs(td.hours - h) * 60 + abs(td.minutes - m),
 			last_state = ds1302.readRAMbyte(FRAM_LAST_STATE);
 	if (light_bulb_state == 0 && td.hours >=10 && td.hours < 22) {
-		if(last_state == 1 && delta < LAMP_SWITCH_MIN_DELTA) {
-
-		} else {
 			if (config.light_sensor_pin > 0) {
 				int lsv = cd4067[ config.light_sensor_pin>>4 ].read(config.light_sensor_pin & 0x0F);
 				int delta2 = (td.hours - ds1302.readRAMbyte(FRAM_DARK_START_HOUR))*60 + (td.minutes - ds1302.readRAMbyte(FRAM_DARK_START_MINUTE));
@@ -1432,31 +1435,24 @@ void loop()
 						lightSwitch(true);
 					}
 				} else {
+					lightSwitch(false);
 					ds1302.writeRAMbyte(FRAM_DARK_START_HOUR, td.hours);
 					ds1302.writeRAMbyte(FRAM_DARK_START_MINUTE, td.minutes);
-// 					if (delta > 5 && ) {
-// 						lightSwitch(false);
-// 					}
 				}
 			} else {
-				if (delta > LAMP_SWITCH_MIN_DELTA) {
+// 				if (delta > LAMP_SWITCH_MIN_DELTA) {
 					lightSwitch(true);
-	// 				pin_write(VIO_LIGHT_BULB_PIN, 1, 1);
-	// 				light_bulb_state = 1;
-	// 				ds1302.writeRAMbyte(0, td.hours);
-	// 				ds1302.writeRAMbyte(1, td.minutes);
-				}
+// 				}
 			}
-		}
 	} else if (light_bulb_state == 1 && (td.hours >=22 || td.hours < 10) ) {
- 		if ( delta > LAMP_SWITCH_MIN_DELTA) {
+//  		if ( delta > LAMP_SWITCH_MIN_DELTA) {
 			lightSwitch(false);
 // 			pin_write(VIO_LIGHT_BULB_PIN, 0, 1);
 // 			light_bulb_state = 0;
 // 			ds1302.writeRAMbyte(0, td.hours);
 // 			ds1302.writeRAMbyte(1, td.minutes);
 // 			ds1302.writeRAMbyte(2, 0);
- 		}
+//  		}
 	}
 	if (light_bulb_state == 1) {
 		ds1302.writeRAMbyte(FRAM_HOUR, td.hours);
