@@ -15,17 +15,27 @@
 #define WSST_RUN			5
 // extern HardwareSerial Serial;
 
+#ifndef WSEX_DELTA
+	#define WSEX_DELTA 8
+#endif
+// #define USE_PRECALIBRATE 	1
 WaterServoEx::WaterServoEx()
 {
 	state = WSST_ZERO;
 	n_pos = 0;
+	this->last_pos = -1;
 // 	this->positions = NULL;
 }
 
 void WaterServoEx::resetError()
 {
 	this->errc = 0;
-	this->state = WSST_ZERO;
+	this->last_pos = -1;
+	srv.attach(this->pin);
+	srv.write(0);
+	delay(500);
+	srv.detach();
+	this->state = WSST_CALIBRATED;
 }
 
 void WaterServoEx::init(char pin, char reed, uint8_t _n_pos, int t0, int t1)
@@ -42,12 +52,12 @@ void WaterServoEx::init(char pin, char reed, uint8_t _n_pos, int t0, int t1)
 	this->errc = 0;
 	pinMode(this->reed, INPUT);
 	digitalWrite(this->reed, LOW);
-	srv.attach(this->pin);
-	srv.write(0);
+	__moveTo(180);
 	delay(2000);
-	srv.write(180);
+	__moveTo(0);
 	delay(2000);
-	srv.detach();
+
+	last_pos = digitalRead(this->reed) == HIGH ? 0 : -1;
 //  	calibrate();
 }
 
@@ -63,6 +73,7 @@ void WaterServoEx::setDevId(uint8_t _dev_id)
 }
 void WaterServoEx::calibrate(bool dbg)
 {
+#ifdef USE_PRECALIBRATE
 	int  i=0, _state=0, min_delta = 6, n_angles = 0, n=0;
 // 	dbg=true;
 // 	Serial.flush();
@@ -228,21 +239,41 @@ void WaterServoEx::calibrate(bool dbg)
 		}
 	}
 Serial.flush();
+#else
+	this->__moveTo(0);
+	Serial.println("Zero");
+	delay(1000);
+	for (uint8_t i =1; i <= this->n_pos; ++i) {
+		Serial.print("moving to ");
+		Serial.println(i+1, DEC);
+		this->moveTo(i);
+		Serial.println("done");
+		delay(1000);
+	}
+#endif
 }//sub
+//
+
+void WaterServoEx::__moveTo(int angle)
+{
+	srv.attach(this->pin);
+	srv.write(angle);
+	delay(400); //turning
+	srv.detach();
+	delay(300);//waiting reed
+// 	Serial.print(angle, DEC);
+// 	Serial.print(" : ");
+// 	Serial.println(digitalRead(this->reed), DEC);
+}
 
 void WaterServoEx::moveTo(int n)
 {
-// 	Serial.print("Mov ");
-// 	Serial.println(n, DEC);
-// 	Serial.print("move ");
-// 	Serial.print(n, DEC);
-// 	Serial.print(" ");
-// 	Serial.println(this->n_pos);
-	if (n < 1 || n > this->n_pos/* || this->positions==NULL*/) {
-// 		Serial.println("oor");
+	if (n < 1 || n > this->n_pos) {
 		this->errc = ERR_OUT_OF_RANGE;
 		return;
 	}
+
+#ifdef USE_PRECALIBRATE
 	if ((this->state & WSST_CALIBRATED) == 0) {
 // 		Serial.println(__LINE__);
 		this->calibrate(1);
@@ -276,28 +307,99 @@ void WaterServoEx::moveTo(int n)
 		int _old_state = this->state, errs = 0;
 		this->state = WSST_ZERO;
 		do {
-// 			Serial.println(__LINE__);
 			this->calibrate(1);
-// 			Serial.println(__LINE__);
 			this->moveTo(n);
-// 			Serial.println(__LINE__);
+
 		} while (digitalRead(this->reed) != HIGH && errs++ < 3);
 		if (errs >=3) {
 			this->errc = ERR_UNRECOV_MISS;
 			this->state = WSST_STOPPED;
-// 			Serial.println(__LINE__);
 			return;
 		}
 		this->state |= WSST_RUN;
 
-	}/* else {
-		srv.attach(this->pin);
-		srv.write(0);
-		delay(500);
-		srv.write(this->positions[ n-1 ]);
-		delay(500);// pi/3 => 0.1s 0.5s=>5pi/3.
-		srv.detach();
-	}*/
+	}
+#else
+	int da=0, dn=0, a;
+// 	if (n == this->n_pos) {
+// 		__moveTo(180);
+// 		this->last_pos = digitalRead(this->reed)==HIGH ? this->n_pos : this->n_pos+1;
+// 	}
+	--n;
+ 	Serial.print("mov to ");
+ 	Serial.println(n, DEC);
+ 	Serial.print("last pos:");
+ 	Serial.println(this->last_pos, DEC);
+
+	if(n == this->last_pos) {
+		if (digitalRead(this->reed) == HIGH) {
+// 			Serial.println("hit!");
+			return;
+		}
+		da = srv.read();
+		for (dn = da-WSEX_DELTA; dn < da+WSEX_DELTA;dn+=2) {
+			__moveTo(dn);
+// 			srv.attach(this->pin);
+// 			srv.write(dn);
+// 			delay(200);
+// 			srv.detach();
+// 			delay(300);
+			if (digitalRead(this->reed) == HIGH) {
+// 				Serial.println("2:hit!");
+				this->errc = 0;
+				return;
+			}
+		}
+// 		Serial.println("1:miss!");
+		this->resetError();
+		this->moveTo(n + 1);
+	} else if (n < this->last_pos) {
+		da = -2;
+		dn = -1;
+	} else if (n > this->last_pos) {
+		da = 2;
+		dn = 1;
+	}
+
+// 	Serial.print("searching ");
+// 	Serial.print(da,DEC);
+// 	Serial.print(" ");
+// 	Serial.println(dn,DEC);
+
+	a = srv.read();
+
+	while (digitalRead(this->reed) == HIGH) {
+		__moveTo(a);
+		a += da;
+	}//while
+
+	while (a >=0 && a <= 200 && n != this->last_pos) {
+// 		Serial.print("a=");
+// 		Serial.println(a, DEC);
+// 		Serial.print("current:");
+// 		Serial.print(last_pos, DEC);
+// 		Serial.print(" mov to:");
+// 		Serial.println(n, DEC);
+			__moveTo(a);
+			if ((digitalRead(this->reed)) == HIGH) {
+					this->last_pos += dn;
+					if (this->last_pos == n) {
+// 						Serial.println("FOUND!");
+						return;
+					}
+// 					Serial.print("found ");
+// 					Serial.print(last_pos, DEC);
+					//move to next LOW reed pos
+					while ((digitalRead(this->reed)==HIGH) && a >=0 && a<=200) {
+						a+=da;
+						__moveTo(a);
+					}//while high
+			}//if high
+		a+=da;
+	}//while
+	this->errc = ERR_MISS;
+	return;
+#endif
 }
 
 bool WaterServoEx::isError()

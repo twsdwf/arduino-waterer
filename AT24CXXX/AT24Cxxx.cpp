@@ -40,8 +40,9 @@ void AT24Cxxx::write(uint16_t address, uint8_t byte)
 int AT24Cxxx::writeBuffer(int start, char*buf, int length)
 {
 	char*ptr= buf;
-	Wire.beginTransmission(this->address);
 	if (!(start & 0x3F)) {
+// 		Serial.println("page");
+		Wire.beginTransmission(this->address);
 		Wire.write((uint8_t)((start) >> 8));
 		Wire.write((uint8_t)((start) >> 0));
 		for (int i = 0; i < length; ++i, ++start) {
@@ -51,9 +52,9 @@ int AT24Cxxx::writeBuffer(int start, char*buf, int length)
 	} else {
 		for (int i = 0; i < length; ++i, ++start) {
 				Wire.beginTransmission(this->address);
-				Wire.write((uint8_t)((start) >> 8));
-				Wire.write((uint8_t)((start) >> 0));
-				this->write(start, *ptr++);
+					Wire.write((uint8_t)((start) >> 8));
+					Wire.write((uint8_t)((start) >> 0));
+					this->write(start, *ptr++);
 				Wire.endTransmission();
 			}
 	}

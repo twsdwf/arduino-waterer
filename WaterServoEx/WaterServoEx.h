@@ -19,12 +19,9 @@ class WaterServoEx
 	Servo srv;
 	uint8_t pin, state, reed,dev_id, errc;
 	uint8_t positions[18];
-    int _t0,_t1, n_pos;
+    int _t0,_t1, n_pos, last_pos;
 protected:
-	/**
-	 * calibration. using reed to find out all available cups.storing all positions in this->positions for future use.
-	 */
-
+	void __moveTo(int angle);
 public:
 	void calibrate(bool dbg=true);
 	WaterServoEx();
