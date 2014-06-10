@@ -37,7 +37,7 @@ ATCxxx is compatible between different sizes.
 char buf[60]={0}, str[40]={0};
 
 // #define BIG_ROOM 1
-// #define MY_ROOM 	1
+ #define MY_ROOM 	1
 // #define MULTIDOSER 1
 // #define _DEBUG	1
 
@@ -226,6 +226,11 @@ char buf[60]={0}, str[40]={0};
 #define SET_ERRORS		(config.flags | 0x08)
 #define UNSET_ERRORS	(config.flags & (~0x08))
 #define GET_ERRORS		(config.flags & 0x08)
+
+#define SET_DEBUG		(config.flags | 0x10)
+#define UNSET_DEBUG		(config.flags & (~0x10))
+#define GET_DEBUG		(config.flags & 0x10)
+
 #define PIN(x) ( (x) & 0x0F)  // 4 bits (vals 0..15)
 #define CHIP(x) ( ((x)>>4) & 0x03) //2 bits, 0..3
 #define DOSER(x) ( ((x)>>6) & 0x03) //2 bits, 0..3
@@ -865,6 +870,11 @@ void water2Bowl(int i)
 	if (td.day != ds1302.fromTimestamp(pot.last_time).day) {
 		pot.watered = 0;
 	}
+	if (GET_ERRORS) {
+		for (int j=0;j< DOSERS; ++j) {
+			wd[j].resetError();
+		}
+	}
 	if (pot.watered > pot.day_max) {
 //  		sprintf(buf, "%i max=(", i);
 //  		Serial.println(buf);
@@ -896,7 +906,7 @@ void water()
 
 	while ( i < config.sensors_count) {
 		pots_holder.readPot(i, &pot);
-		if ( !wd[ DOSER(pot.sensor) ].isError() && NEEDS_WATERING(i) ) {
+		if ( (!wd[ DOSER(pot.sensor) ].isError() || GET_ERRORS) && NEEDS_WATERING(i) ) {
 			water2Bowl(i);
 		} else {
 			if (wd[ DOSER(pot.sensor) ].isError()) {
@@ -984,7 +994,19 @@ void setOption(char* cmd)
 // 	static const char nights[] PROGMEM = "nights: work day %d-%d, weekend %d-%d";
 // 	static const char stop_msg[] PROGMEM = "Stopped.\nSensors count=";
 	static const char FOUR_INTS_FMT_STR[] PROGMEM = "%d %d %d %d";
-	if (!strncmp(cmd, "light", 5)) {
+	if (!strncmp("dbg", cmd, 3)) {
+		if (cmd[4] == '1') {
+			config.flags = SET_DEBUG;
+			for (uint8_t i =0;i< DOSERS;++i) {
+				wd[i].setDbg(1);
+			}
+		} else if (cmd[4] == '0') {
+			config.flags = UNSET_DEBUG;
+			for (uint8_t i =0;i < DOSERS;++i) {
+				wd[i].setDbg(0);
+			}
+		}
+	} else if (!strncmp(cmd, "light", 5)) {
 		int  a,b,c,d;
 		EXTRACT_STRING(FOUR_INTS_FMT_STR);
 		sscanf(cmd+6, str, &a, &b, &c, &d);
@@ -1099,10 +1121,10 @@ void dumpConfig()
 {
 	char index = 0;
 	const char*space=" ";
-	static const char*fmt = "%d %d %d %d %d %d %d %d %d %s;";
-	sprintf(buf,"set sensors %d\n", config.sensors_count);
+	static const char*fmt = "%d,%d,%d,%d,%d,%d,%d,%d,%d,%s;";
+	sprintf(buf, "%d;\n", config.sensors_count);
 	Serial.println(buf);
-	delay(100);
+// 	delay(100);
 	while (index < config.sensors_count) {
 		pots_holder.readPot(index, &pot);
 		sprintf(buf, fmt,
@@ -1118,30 +1140,33 @@ void dumpConfig()
 					pot.name
 			   );
  		Serial.println(buf);
-		delay(250);
+// 		delay(250);
 		++index;
 	}
+	Serial.println(";;");
+	Serial.flush();
 }
 
 void dumpState()
 {
 	uint8_t index = 0;
-	const char*space=" ";
+	const char*comma=";";
 	while (index < config.sensors_count) {
 		pots_holder.readPot(index, &pot);
 		Serial.print(index, DEC);
-		Serial.print(space);
+		Serial.print(comma);
 		Serial.print(CHIP(pot.sensor), DEC);
-		Serial.print(space);
+		Serial.print(comma);
 		Serial.print(PIN(pot.sensor), DEC);
-		Serial.print(space);
+		Serial.print(comma);
 		Serial.print(pot.watered, DEC);
-		Serial.print(space);
+		Serial.print(comma);
 		Serial.print(pot.last_time, DEC);
-		Serial.print(space);
+		Serial.print(comma);
 		Serial.print(pot.flags, DEC);
-		Serial.print(space);
+		Serial.print(comma);
 		Serial.print(pot.name);
+		Serial.print(comma);
 		Serial.println();
 		Serial.flush();
 		delay(100);
@@ -1174,9 +1199,12 @@ bool doCommand(char*cmd)
 	}
 	else */
 	// wdg 1 19
-	if (!strncmp(cmd, "wdg",3)) {
+	if (!strncmp(cmd, "wdg",3) || !strncmp(cmd, "wdr", 3)) {
 		int8_t index =  cmd[4]-'0', pos = atoi(cmd+6);
 		if (index >=0 && index <DOSERS) {
+			if(cmd[2] == 'r') {
+				ws[ index ].resetError();
+			}
 			Serial.print("move ");
 			Serial.print(index, DEC);
 			Serial.print(" to pos ");
@@ -1238,7 +1266,10 @@ bool doCommand(char*cmd)
 		setOption(cmd + 4);
 	} else if (!strncmp("pipi", cmd, 4))  {
 		char index = atoi(cmd + 5);
-		wd[ index ].run(30);
+		if (!wd[ index ].isError() || GET_ERRORS) {
+			wd[ index ].resetError();
+			wd[ index ].run(30);
+		}
 	} else if (!strncmp("water ", cmd, 6)) {
 		parseWaterCommand(cmd+6);
 	} else if (!strncmp(cmd,"stat",4)) {
@@ -1282,7 +1313,7 @@ bool doCommand(char*cmd)
 
 void checkCommand()
 {
-	if (Serial.available() < 4) return;
+	if (!Serial.available()) return;
 	static int i = 0;
 	static char buf[42]={0}, ch;
 	while (Serial.available()) {
@@ -1553,7 +1584,7 @@ mem.init();
 #ifdef BIG_ROOM
 	ws[0].init(WATER_SERVO1_PIN, REED_1, 10);
 #else
-	ws[0].init(WATER_SERVO1_PIN, REED_1, 16, 500, 2500/*3200*/);
+	ws[0].init(WATER_SERVO1_PIN, REED_1, 11, 500, 2500/*3200*/);
 #endif
 	ws[0].setDevId(1);
 
