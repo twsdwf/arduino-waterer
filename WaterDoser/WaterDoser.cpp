@@ -92,7 +92,7 @@ bool WaterDoser::isOverheated() {
 	return this->readTemperature() > this->max_temp;
 }
 #endif
-int WaterDoser::run(int ml)
+uint16_t WaterDoser::run(int ml)
 {
 	unsigned long int start = millis();
 	int prev_val = 0;

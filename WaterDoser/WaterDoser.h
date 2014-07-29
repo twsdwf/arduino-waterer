@@ -34,7 +34,7 @@ public:
 #endif
 	bool isError();
     char getState();
-    int run(int ml = 30);
+    uint16_t run(int ml = 30);
     void stop();
     void init(uint8_t interrupt=0);
 	friend void water_doser_ticker(); //interrupt handler
